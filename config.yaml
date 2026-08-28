@@ -1,0 +1,13 @@
+default:
+  threshold: 20
+  max_comment_length_to_score: 5000
+  account_cache_ttl_hours: 24
+  modmail_cooldown_minutes: 60
+
+subreddits:
+  r/exampleSub:
+    threshold: 25
+    custom_ai_phrases:
+      - "as a fellow grower"
+    whitelisted_users:
+      - "known_human_user"

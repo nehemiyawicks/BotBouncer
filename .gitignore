@@ -1,0 +1,10 @@
+.env
+*.db
+bot.log*
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+venv/
+.venv/
+tests/data/*.jsonl
