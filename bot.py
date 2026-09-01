@@ -1,8 +1,8 @@
+import json
 import os
 import time
 import logging
 import logging.handlers
-from datetime import datetime, timezone
 
 import praw
 import yaml
@@ -56,10 +56,8 @@ def fetch_account_info(reddit, username, ttl_hours):
         created = user.created_utc
         age_days = int((time.time() - created) / 86400)
         karma = user.comment_karma
-        comments = []
-        for c in user.comments.new(limit=10):
-            comments.append(c.body)
-            time.sleep(0.5)
+        # Fetch all 10 comments in one batch -- no per-item sleep inside this loop
+        comments = [c.body for c in user.comments.new(limit=10)]
         db.cache_account(username, age_days, karma, comments)
         return {"age_days": age_days, "karma": karma, "comment_history": comments}
     except Exception as e:
@@ -67,12 +65,19 @@ def fetch_account_info(reddit, username, ttl_hours):
         return {"age_days": 365, "karma": 1000, "comment_history": []}
 
 
-def get_sub_config(config, subreddit):
+def get_sub_config(config, subreddit, enrolled_row=None):
     defaults = config.get("default", {})
-    sub_cfg = config.get("subreddits", {}).get(f"r/{subreddit}", {})
+    sub_cfg = config.get("subreddits", {}).get(f"r/{subreddit}", {}) or {}
     threshold = sub_cfg.get("threshold", defaults.get("threshold", 20))
     custom_phrases = sub_cfg.get("custom_ai_phrases", [])
-    whitelisted = sub_cfg.get("whitelisted_users", [])
+    whitelisted = set(sub_cfg.get("whitelisted_users", []))
+
+    if enrolled_row:
+        if enrolled_row.get("threshold_override"):
+            threshold = enrolled_row["threshold_override"]
+        whitelisted |= set(json.loads(enrolled_row.get("whitelisted_users") or "[]"))
+        custom_phrases += json.loads(enrolled_row.get("custom_phrases") or "[]")
+
     return threshold, custom_phrases, whitelisted
 
 
@@ -111,9 +116,11 @@ def run():
             multi = reddit.subreddit(sub_names)
 
             for comment in multi.stream.comments(skip_existing=True):
+                # Refresh enrolled list and check inbox periodically
                 if time.time() - inbox_last_check > 60:
                     enrollment.process_inbox(reddit)
                     inbox_last_check = time.time()
+                    enrolled = db.get_enrolled_subs()
 
                 try:
                     if not comment.author:
@@ -126,22 +133,15 @@ def run():
                     if len(body.split()) > max_length:
                         continue
 
-                    threshold, custom_phrases, whitelisted = get_sub_config(config, subreddit)
-
-                    if username in whitelisted:
-                        continue
-
-                    # check db whitelist
                     enrolled_row = next(
                         (s for s in enrolled if s["subreddit"] == subreddit), None
                     )
-                    if enrolled_row:
-                        import json
-                        db_whitelist = json.loads(enrolled_row.get("whitelisted_users") or "[]")
-                        if username in db_whitelist:
-                            continue
-                        if enrolled_row.get("threshold_override"):
-                            threshold = enrolled_row["threshold_override"]
+                    threshold, custom_phrases, whitelisted = get_sub_config(
+                        config, subreddit, enrolled_row
+                    )
+
+                    if username in whitelisted:
+                        continue
 
                     info = fetch_account_info(reddit, username, ttl_hours)
                     result = scorer.score(
@@ -169,9 +169,13 @@ def run():
                             body, comment.id, cooldown,
                         )
 
-                        if flag_count >= 3:
+                        # Only escalate once per user (check escalated flag in DB)
+                        if flag_count >= 3 and not db.is_escalated(username):
                             flags = db.get_user_flags(username)
-                            permalinks = [f.get("comment_id", "") for f in flags[:5]]
+                            permalinks = [
+                                f"https://reddit.com/r/{f['subreddit']}/comments/{f['comment_id']}"
+                                for f in flags[:5]
+                            ]
                             db.mark_escalated(username)
                             mailer.send_escalated_modmail(
                                 reddit, subreddit, username, flag_count, permalinks
@@ -182,7 +186,7 @@ def run():
 
                 except praw.exceptions.APIException as e:
                     log.error(f"API error: {e}")
-                    if "429" in str(e) or "RATELIMIT" in str(e.error_type):
+                    if "429" in str(e) or "RATELIMIT" in str(getattr(e, "error_type", "")):
                         exponential_backoff(error_count)
                         error_count += 1
                 except Exception as e:

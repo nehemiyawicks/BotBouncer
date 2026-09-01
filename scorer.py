@@ -48,7 +48,7 @@ OPINION_MARKER = re.compile(
 )
 EM_DASH = re.compile(r'—|–')
 BOLD_HEADER = re.compile(r'^\*\*[A-Z][^*]*:?\*\*:?\s', re.MULTILINE)
-BULLET = re.compile(r'^\s*[-*+]\s+|\d+\.\s+', re.MULTILINE)
+BULLET = re.compile(r'^\s*[-*+]\s+|^\s*\d+\.\s+', re.MULTILINE)
 
 # Transitional words that appear mid-comment (not just line starters)
 TRANSITIONAL = re.compile(
@@ -57,6 +57,11 @@ TRANSITIONAL = re.compile(
     r'for instance|for example|specifically|in particular)\b',
     re.IGNORECASE,
 )
+
+_CONTRACTION_STEMS = {
+    "doesn", "didn", "wouldn", "couldn", "shouldn", "weren",
+    "haven", "hadn", "isn", "aren", "wasn", "mustn", "needn",
+}
 
 # Definition-style opener: "X is a/an ..." or "X are ..."
 EXPLANATORY_CONNECTOR = re.compile(
@@ -198,8 +203,9 @@ class CommentScorer:
             total += 2
             signals.append("structural:no personal opinion markers")
 
-        # Definition-style opener: "X is a ..."
-        if DEFINITION_OPENER.match(text.strip()):
+        # Definition-style opener: skip quoted Reddit replies (lines starting with ">")
+        clean_start = re.sub(r'^(>.*\n)+', '', text.strip())
+        if DEFINITION_OPENER.match(clean_start):
             total += 3
             signals.append("structural:definition-style opener")
 
@@ -270,15 +276,10 @@ class CommentScorer:
             signals.append("penalty:profanity/slang detected")
 
         if word_count > 20:
-            # contraction stems produced by word tokenizer (e.g. doesn't -> "doesn")
-            _contraction_stems = {
-                "doesn", "didn", "wouldn", "couldn", "shouldn", "weren",
-                "haven", "hadn", "isn", "aren", "wasn", "mustn", "needn",
-            }
             checkable = [
                 w for w in words
                 if w.isalpha() and 4 <= len(w) <= 15 and w == w.lower()
-                and w not in _contraction_stems
+                and w not in _CONTRACTION_STEMS
             ]
             misspelled = spell.unknown(checkable)
             if len(misspelled) == 1:
@@ -307,7 +308,8 @@ class CommentScorer:
         else:
             verdict = "flag"
 
-        max_possible = 15 + 5 + 5 + 4 + 3 + 3 + 3 + 2 + 3 + 4 + 7 + 4 + 3 + 3 + 4 + 3 + 2
+        # A: 15, B: 5+5+4+3+3+3+2+2+3+3+4, C: 7+4+3+3, D: 4+3+2
+        max_possible = 15 + 5 + 5 + 4 + 3 + 3 + 3 + 2 + 2 + 3 + 3 + 4 + 7 + 4 + 3 + 3 + 4 + 3 + 2
         confidence = max(0.0, min(1.0, total / max_possible))
 
         return ScorerResult(

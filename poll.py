@@ -90,13 +90,20 @@ def get_enrolled_subs(reddit) -> list[dict]:
     return subs
 
 
+_account_cache: dict[str, dict] = {}
+
+
 def fetch_account_info(reddit, username: str) -> dict:
+    if username in _account_cache:
+        return _account_cache[username]
     try:
         user = reddit.redditor(username)
         age_days = int((time.time() - user.created_utc) / 86400)
         karma = user.comment_karma
         history = [c.body for c in user.comments.new(limit=10)]
-        return {"age_days": age_days, "karma": karma, "comment_history": history}
+        result = {"age_days": age_days, "karma": karma, "comment_history": history}
+        _account_cache[username] = result
+        return result
     except Exception as e:
         log.warning(f"Could not fetch {username}: {e}")
         return {"age_days": 365, "karma": 1000, "comment_history": []}

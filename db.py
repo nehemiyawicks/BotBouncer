@@ -63,17 +63,22 @@ def init_db():
 
 def log_flagged_comment(comment_id, subreddit, username, score, signals, verdict):
     with _conn() as con:
-        con.execute(
+        cur = con.execute(
             """INSERT OR IGNORE INTO flagged_comments
                (comment_id, subreddit, username, score, signals, verdict, timestamp)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (comment_id, subreddit, username, score, json.dumps(signals), verdict, time.time()),
         )
-        cur = con.execute(
+        # Only increment flag count if a new record was actually inserted
+        if cur.rowcount == 0:
+            cur2 = con.execute("SELECT flag_count FROM flagged_users WHERE username = ?", (username,))
+            row = cur2.fetchone()
+            return row["flag_count"] if row else 0
+
+        existing = con.execute(
             "SELECT flag_count FROM flagged_users WHERE username = ?", (username,)
-        )
-        row = cur.fetchone()
-        if row:
+        ).fetchone()
+        if existing:
             con.execute(
                 "UPDATE flagged_users SET flag_count = flag_count + 1, last_flagged = ? WHERE username = ?",
                 (time.time(), username),
@@ -83,8 +88,9 @@ def log_flagged_comment(comment_id, subreddit, username, score, signals, verdict
                 "INSERT INTO flagged_users (username, flag_count, last_flagged) VALUES (?, 1, ?)",
                 (username, time.time()),
             )
-        cur2 = con.execute("SELECT flag_count FROM flagged_users WHERE username = ?", (username,))
-        return cur2.fetchone()["flag_count"]
+        return con.execute(
+            "SELECT flag_count FROM flagged_users WHERE username = ?", (username,)
+        ).fetchone()["flag_count"]
 
 
 def dismiss_comment(comment_id):
@@ -97,6 +103,14 @@ def get_flag_count(username):
         cur = con.execute("SELECT flag_count FROM flagged_users WHERE username = ?", (username,))
         row = cur.fetchone()
         return row["flag_count"] if row else 0
+
+
+def is_escalated(username) -> bool:
+    with _conn() as con:
+        row = con.execute(
+            "SELECT escalated FROM flagged_users WHERE username = ?", (username,)
+        ).fetchone()
+        return bool(row and row["escalated"])
 
 
 def mark_escalated(username):

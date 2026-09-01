@@ -52,7 +52,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: seen_comments.txt
-          key: seen-comments-${{ github.run_id }}
+          # Fixed key so the same entry is restored and saved on every run.
+          # actions/cache always saves on cache miss; on hit it skips save.
+          # Use a date-bucketed key so the cache refreshes weekly (avoids
+          # unbounded growth if we ever store more data here).
+          key: seen-comments-${{ github.run_number }}
           restore-keys: seen-comments-
 
       - name: Run poll
