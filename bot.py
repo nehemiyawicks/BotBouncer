@@ -28,12 +28,20 @@ def load_config():
         return yaml.safe_load(f)
 
 
+def _require_env(name: str) -> str:
+    val = os.environ.get(name)
+    if not val:
+        log.error(f"Required environment variable {name} is not set. See .env.example.")
+        raise SystemExit(1)
+    return val
+
+
 def make_reddit():
     return praw.Reddit(
-        client_id=os.environ["REDDIT_CLIENT_ID"],
-        client_secret=os.environ["REDDIT_CLIENT_SECRET"],
-        username=os.environ["REDDIT_USERNAME"],
-        password=os.environ["REDDIT_PASSWORD"],
+        client_id=_require_env("REDDIT_CLIENT_ID"),
+        client_secret=_require_env("REDDIT_CLIENT_SECRET"),
+        username=_require_env("REDDIT_USERNAME"),
+        password=_require_env("REDDIT_PASSWORD"),
         user_agent=os.environ.get("REDDIT_USER_AGENT", "BotBouncer/1.0"),
     )
 
