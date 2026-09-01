@@ -1,0 +1,41 @@
+name: BotBouncer
+
+on:
+  schedule:
+    # Polls Reddit every 15 minutes. Free on public repos.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Restore seen-comment IDs from cache so we don't re-flag across runs
+      - name: Restore seen cache
+        uses: actions/cache@v4
+        with:
+          path: seen_comments.txt
+          key: seen-comments-${{ github.run_id }}
+          restore-keys: seen-comments-
+
+      - name: Run poll
+        env:
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+          REDDIT_USER_AGENT: BotBouncer/1.0
+          # Comma-separated list of subreddits to monitor, e.g. "python,learnpython"
+          MONITOR_SUBS: ${{ secrets.MONITOR_SUBS }}
+          SCORE_THRESHOLD: ${{ vars.SCORE_THRESHOLD || '20' }}
+        run: python poll.py

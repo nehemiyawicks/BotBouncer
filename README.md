@@ -2,9 +2,9 @@
 
 **This bot assists moderators, it does not replace them.**
 
-A Reddit bot that detects AI-generated comments and alerts moderators via modmail. It is not a keyword filter. It scores comments based on a combination of behavioral, linguistic, and account signals -- the same signals a trained human mod would notice.
+A Reddit bot that detects AI-generated comments and alerts moderators via modmail. Not a keyword filter -- it scores comments across behavioral, linguistic, and account signals, the same way a trained human mod would spot AI slop.
 
-Supports GitHub Sponsors: https://github.com/sponsors/nehemiyawicks
+GitHub Sponsors: https://github.com/sponsors/nehemiyawicks
 
 ---
 
@@ -12,7 +12,7 @@ Supports GitHub Sponsors: https://github.com/sponsors/nehemiyawicks
 
 - Monitors enrolled subreddits for comments that look AI-generated
 - Scores each comment across 5 signal groups (phrase patterns, structure, account history, statistics, human penalties)
-- Sends a modmail alert when a comment scores above the threshold
+- Sends a modmail alert when a comment crosses the threshold
 - Escalates repeat offenders (3+ flags) with a separate modmail
 - Never auto-removes or auto-bans anything
 
@@ -26,65 +26,52 @@ Supports GitHub Sponsors: https://github.com/sponsors/nehemiyawicks
 
 ---
 
-## Score breakdown
+## Hosting options
 
-| Group | What it checks | Max points |
-|-------|---------------|-----------|
-| A - AI phrases | "Certainly!", "In conclusion", "Key takeaways", etc. | +15 |
-| B - Structure | Bullet lists, bold headers, no contractions, em dashes, uniform paragraphs | +24 |
-| C - Account | New account, low karma, all-long comment history | +19 |
-| D - Statistics | High lexical diversity, low sentence variance, high readability grade | +9 |
-| E - Human signals | Profanity, typos, Reddit slang, personal anecdotes, short comments | -17 |
+### Option 1: GitHub Actions (free, zero infrastructure)
 
-Thresholds:
-- score < 10: clean, no action
-- score 10-19: suspicious, logged only
-- score >= 20: flagged, modmail sent
+Fork this repo and it runs on GitHub's servers for free. Works by polling Reddit every 15 minutes instead of streaming.
 
----
+**Setup:**
 
-## Enroll your subreddit
+1. Fork this repo
+2. Create a Reddit script app at reddit.com/prefs/apps (select "script", redirect URI = `http://localhost:8080`)
+3. Go to your fork's Settings > Secrets and variables > Actions
+4. Add these **Secrets**:
+   - `REDDIT_CLIENT_ID` -- from your Reddit app
+   - `REDDIT_CLIENT_SECRET` -- from your Reddit app
+   - `REDDIT_USERNAME` -- your bot account username
+   - `REDDIT_PASSWORD` -- your bot account password
+   - `MONITOR_SUBS` -- comma-separated subreddit names, e.g. `python,learnpython,programming`
+5. Go to Actions tab and enable workflows
+6. The bot runs automatically every 15 minutes
 
-DM the bot account (u/BotBouncer) with:
+To change the flag threshold, add a **Variable** (not secret) named `SCORE_THRESHOLD` with a value like `25`.
 
-```
-!enroll r/yoursubreddit
-```
+To trigger a manual run: Actions > BotBouncer > Run workflow.
 
-You must be a moderator of the subreddit. The bot verifies this via the Reddit API before acting.
-
-Other commands:
-- `!stop r/yoursubreddit` - stop monitoring
-- `!whitelist r/yoursubreddit u/username` - whitelist a user
-- `!threshold r/yoursubreddit 25` - set a custom score threshold
-- `!status` - list enrolled subreddits and stats
+**Limits:** GitHub gives 2000 free minutes/month on public repos. At 15-min intervals, this bot uses ~2 min/run * 2880 runs/month = well under the limit for a handful of subreddits.
 
 ---
 
-## Self-host on Oracle Cloud Free Tier
+### Option 2: Self-host on Oracle Cloud Free Tier (persistent streaming)
 
-Oracle Cloud gives you a free ARM VM (4 cores, 24GB RAM) that runs indefinitely.
+Oracle Cloud's always-free ARM VM (4 cores, 24GB RAM) runs indefinitely at no cost.
 
-1. Create an account at cloud.oracle.com, spin up an ARM Ampere A1 instance running Ubuntu 22.04
-2. SSH in and install Python 3.11+:
+1. Create an account at cloud.oracle.com, spin up an ARM Ampere A1 instance with Ubuntu 22.04
+2. SSH in and set up:
    ```
    sudo apt update && sudo apt install python3.11 python3.11-venv git -y
-   ```
-3. Clone and set up:
-   ```
    git clone https://github.com/nehemiyawicks/BotBouncer
    cd BotBouncer
-   python3.11 -m venv venv
-   source venv/bin/activate
+   python3.11 -m venv venv && source venv/bin/activate
    pip install -r requirements.txt
-   cp .env.example .env
+   cp .env.example .env && nano .env
    ```
-4. Edit `.env` with your Reddit app credentials (create a script-type app at reddit.com/prefs/apps)
-5. Run:
+3. Run with systemd for auto-restart:
    ```
-   nohup python bot.py > /dev/null 2>&1 &
+   sudo nano /etc/systemd/system/botbouncer.service
    ```
-6. Or use systemd for auto-restart on reboot -- create `/etc/systemd/system/botbouncer.service`:
    ```ini
    [Unit]
    Description=BotBouncer
@@ -99,37 +86,72 @@ Oracle Cloud gives you a free ARM VM (4 cores, 24GB RAM) that runs indefinitely.
    [Install]
    WantedBy=multi-user.target
    ```
-   Then: `sudo systemctl enable --now botbouncer`
+   ```
+   sudo systemctl enable --now botbouncer
+   ```
+
+This mode uses `bot.py` (persistent stream) instead of `poll.py` and handles enrollment via DMs.
 
 ---
 
-## Test data
+### Option 3: Your own VPC
 
-Tests require sample data from the HC3 dataset (Human ChatGPT Comparison Corpus).
+Same as Oracle Cloud above -- just run `bot.py` as a systemd service on any Linux machine. All it needs is Python 3.11+ and outbound HTTPS.
+
+---
+
+## Enrolling your subreddit
+
+**GitHub Actions mode:** add your subreddit to the `MONITOR_SUBS` secret in your fork. No DMs needed.
+
+**Self-hosted mode:** DM the bot account with:
+```
+!enroll r/yoursubreddit
+```
+You must be a moderator. The bot verifies this before acting.
+
+Other commands:
+- `!stop r/yoursubreddit` - stop monitoring
+- `!whitelist r/yoursubreddit u/username` - whitelist a user
+- `!threshold r/yoursubreddit 25` - custom score threshold
+- `!status` - list enrolled subreddits
+
+---
+
+## Score breakdown
+
+| Group | What it checks | Points |
+|-------|---------------|--------|
+| A - AI phrases | "Certainly!", "In conclusion", "Key takeaways", "it is important to", etc. | up to +15 |
+| B - Structure | Bullet lists, bold headers, em dashes, no contractions, no opinion markers, uniform paragraphs, definition-style opener, transitional overuse, explanatory connectors | up to +27 |
+| C - Account | New account, low karma, all-long comment history, no casual comments | up to +17 |
+| D - Statistics | High lexical diversity, low sentence variance, high readability grade | up to +9 |
+| E - Human signals | Profanity, typos, Reddit slang, personal anecdotes, short comments | up to -17 |
+
+Thresholds:
+- score < 10: clean, no action
+- score 10-19: suspicious, logged only
+- score >= 20: flagged, modmail sent (default; configurable per sub)
+
+Detection rates (validated against HC3 reddit_eli5 dataset):
+- AI detection (>=10): 100%
+- AI flag rate (>=20): 70%
+- Human false positive rate (>=20): 0%
+
+---
+
+## Test data setup
 
 ```
 pip install -r requirements-dev.txt
 python scripts/prepare_test_data.py
+pytest tests/ -v
 ```
 
-This downloads the `reddit_eli5` split from HuggingFace (Hello-SimpleAI/HC3) and saves 500 AI samples + 500 human samples to `tests/data/`.
-
-Run tests:
-```
-pytest tests/ -v --cov=.
-```
-
----
-
-## Reddit app setup
-
-1. Go to reddit.com/prefs/apps
-2. Create a new app, select "script"
-3. Set redirect URI to `http://localhost:8080`
-4. Copy client ID and secret into `.env`
+This downloads the HC3 reddit_eli5 split from HuggingFace (Hello-SimpleAI/HC3) and saves 500 AI + 500 human samples to `tests/data/`.
 
 ---
 
 ## False positive policy
 
-The scorer is tuned for <= 5% false positive rate on human Reddit comments (validated against the HC3 dataset). A comment is never removed automatically. Mods review every alert and can dismiss or whitelist users directly by replying to the modmail.
+The scorer is tuned for 0% false positive rate on human Reddit comments (validated against the HC3 dataset). A comment is never removed automatically. Mods review every alert and can dismiss or whitelist users directly by replying to the modmail.

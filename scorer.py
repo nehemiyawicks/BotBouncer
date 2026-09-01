@@ -28,7 +28,7 @@ ANECDOTE = re.compile(
 
 CLOSING_QUESTION = re.compile(
     r'(does that help|let me know if you have|happy to elaborate|hope that (helps|answers)|'
-    r'feel free to ask|any (other )?questions)\??\.?\s*$',
+    r'feel free to ask|any (other )?questions|i hope this helps|hope this (helps|clarifies))\??\.?\s*$',
     re.IGNORECASE,
 )
 
@@ -42,22 +42,46 @@ CONTRACTION = re.compile(
 )
 
 FIRST_PERSON = re.compile(r'\b(i|me|my|mine|we)\b', re.IGNORECASE)
-
+OPINION_MARKER = re.compile(
+    r'\b(i think|i believe|i feel|in my opinion|imo|imho|i suspect|i reckon|personally)\b',
+    re.IGNORECASE,
+)
 EM_DASH = re.compile(r'—|–')
-
 BOLD_HEADER = re.compile(r'^\*\*[A-Z][^*]*:?\*\*:?\s', re.MULTILINE)
-
 BULLET = re.compile(r'^\s*[-*+]\s+|\d+\.\s+', re.MULTILINE)
+
+# Transitional words that appear mid-comment (not just line starters)
+TRANSITIONAL = re.compile(
+    r'\b(additionally|furthermore|moreover|in addition|as a result|consequently|'
+    r'therefore|thus|in contrast|on the other hand|in other words|to illustrate|'
+    r'for instance|for example|specifically|in particular)\b',
+    re.IGNORECASE,
+)
+
+# Definition-style opener: "X is a/an ..." or "X are ..."
+EXPLANATORY_CONNECTOR = re.compile(
+    r'\b(this is because|the reason (for this|is that|being)|this means that|'
+    r'this is why|this (can|could|will|would) (be|help|allow|enable)|'
+    r'in other words|to put it (simply|another way))\b',
+    re.IGNORECASE,
+)
+
+DEFINITION_OPENER = re.compile(
+    r'^[A-Z][a-zA-Z\s\(\)]{2,40}(is (a|an|the|one|used|when|what)|are (a|the|used|when|what))',
+)
 
 AI_PHRASES = [
     (r'\bcertainly\b\s*!', "certainly!"),
     (r'\bgreat question\b\s*!', "great question!"),
     (r"\bi hope this helps\b", "i hope this helps"),
     (r"\bit'?s worth noting\b", "it's worth noting"),
+    (r"\bit is worth noting\b", "it is worth noting"),
     (r"\bit'?s important to note\b", "it's important to note"),
+    (r"\bit is important to\b", "it is important to"),
     (r"\bfeel free to\b", "feel free to"),
     (r"\bin conclusion\b", "in conclusion"),
     (r"\bto summarize\b", "to summarize"),
+    (r"\bin summary\b", "in summary"),
     (r"\bkey takeaways?\b", "key takeaways"),
     (r"\bas an ai\b", "as an ai"),
     (r"\bi cannot provide\b", "i cannot provide"),
@@ -66,6 +90,8 @@ AI_PHRASES = [
     (r'\bof course\b\s*!', "of course!"),
     (r"\bthis is a nuanced\b", "this is a nuanced"),
     (r"\bon one hand\b.{0,200}\bon the other hand\b", "on one hand...on the other hand"),
+    (r"\boverall,?\s+it(?:'s| is)\b", "overall it is"),
+    (r"\bit(?:'s| is) worth (mentioning|highlighting|emphasizing)\b", "it is worth mentioning"),
 ]
 
 IT_DEPENDS = re.compile(r"\bit depends on\b", re.IGNORECASE)
@@ -123,19 +149,19 @@ class CommentScorer:
         sentences = _sentences(text)
         paragraphs = _paragraphs(text)
 
-        # Group A
+        # Group A - AI phrase fingerprints
         group_a = 0
         for pattern, label in AI_PHRASES:
             if re.search(pattern, lower):
                 group_a += 3
                 signals.append(f"ai_phrase:{label}")
-        if IT_DEPENDS.findall(lower).__len__() >= 2:
+        if len(IT_DEPENDS.findall(lower)) >= 2:
             group_a += 3
             signals.append("ai_phrase:it depends on (repeated)")
         group_a = min(group_a, 15)
         total += group_a
 
-        # Group B
+        # Group B - structural signals
         bullet_count = len(BULLET.findall(text))
         if bullet_count >= 3:
             total += 5
@@ -145,7 +171,7 @@ class CommentScorer:
             total += 5
             signals.append("structural:bold markdown headers")
 
-        if word_count > 400 and len(FIRST_PERSON.findall(text)) < 3:
+        if word_count > 150 and len(FIRST_PERSON.findall(text)) < 3:
             total += 4
             signals.append("structural:long comment low first-person")
 
@@ -159,15 +185,43 @@ class CommentScorer:
                 total += 3
                 signals.append("structural:uniform paragraph structure")
 
-        if word_count > 150 and not CONTRACTION.search(text):
-            total += 2
+        if word_count > 100 and not CONTRACTION.search(text):
+            total += 3
             signals.append("structural:no contractions in long comment")
 
         if CLOSING_QUESTION.search(text):
             total += 2
             signals.append("structural:closing discussion prompt")
 
-        # Group C
+        # No personal opinion markers in a substantive comment = AI register
+        if word_count > 100 and not OPINION_MARKER.search(text):
+            total += 2
+            signals.append("structural:no personal opinion markers")
+
+        # Definition-style opener: "X is a ..."
+        if DEFINITION_OPENER.match(text.strip()):
+            total += 3
+            signals.append("structural:definition-style opener")
+
+        # Explanatory connector overuse: AI explains everything sequentially
+        expl_count = len(EXPLANATORY_CONNECTOR.findall(text))
+        if expl_count >= 2:
+            total += 3
+            signals.append(f"structural:explanatory connector overuse ({expl_count})")
+        elif expl_count == 1 and word_count > 100:
+            total += 1
+            signals.append("structural:explanatory connector present")
+
+        # Transitional connective overuse: 3+ = strong AI signal
+        transitional_count = len(TRANSITIONAL.findall(text))
+        if transitional_count >= 3:
+            total += 4
+            signals.append(f"structural:transitional connective overuse ({transitional_count})")
+        elif transitional_count >= 2:
+            total += 2
+            signals.append(f"structural:multiple transitional connectives ({transitional_count})")
+
+        # Group C - account signals
         if account_age_days < 7:
             total += 7
             signals.append("account:age < 7 days")
@@ -190,10 +244,10 @@ class CommentScorer:
                 total += 3
                 signals.append("account:no casual/short comments in history")
 
-        # Group D
+        # Group D - statistical signals
         if word_count > 100:
             ttr = _ttr(words)
-            if ttr > 0.7:
+            if ttr > 0.65:
                 total += 4
                 signals.append(f"statistical:high lexical diversity TTR={ttr:.2f}")
 
@@ -205,19 +259,32 @@ class CommentScorer:
 
         if word_count > 50:
             fk = textstat.flesch_kincaid_grade(text)
-            if fk > 14:
+            if fk > 10:
                 total += 2
                 signals.append(f"statistical:high readability grade FK={fk:.1f}")
 
-        # Group E (penalties)
+        # Group E - human penalties
         word_set = set(words)
         if word_set & PROFANITY:
             total -= 5
             signals.append("penalty:profanity/slang detected")
 
         if word_count > 20:
-            misspelled = spell.unknown([w for w in words if w.isalpha() and len(w) > 2])
-            if 1 <= len(misspelled) <= 4:
+            # contraction stems produced by word tokenizer (e.g. doesn't -> "doesn")
+            _contraction_stems = {
+                "doesn", "didn", "wouldn", "couldn", "shouldn", "weren",
+                "haven", "hadn", "isn", "aren", "wasn", "mustn", "needn",
+            }
+            checkable = [
+                w for w in words
+                if w.isalpha() and 4 <= len(w) <= 15 and w == w.lower()
+                and w not in _contraction_stems
+            ]
+            misspelled = spell.unknown(checkable)
+            if len(misspelled) == 1:
+                total -= 2
+                signals.append("penalty:possible typo (1)")
+            elif 2 <= len(misspelled) <= 4:
                 total -= 4
                 signals.append(f"penalty:typos detected ({len(misspelled)})")
 
@@ -240,7 +307,7 @@ class CommentScorer:
         else:
             verdict = "flag"
 
-        max_possible = 15 + 5 + 5 + 4 + 3 + 3 + 2 + 2 + 7 + 4 + 3 + 3 + 2 + 4 + 3 + 2
+        max_possible = 15 + 5 + 5 + 4 + 3 + 3 + 3 + 2 + 3 + 4 + 7 + 4 + 3 + 3 + 4 + 3 + 2
         confidence = max(0.0, min(1.0, total / max_possible))
 
         return ScorerResult(

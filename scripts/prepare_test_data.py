@@ -1,6 +1,5 @@
 """
-Download HC3 reddit_eli5 split from HuggingFace and save 500 AI + 500 human
-samples to tests/data/ for scorer benchmarking.
+Download HC3 reddit_eli5 from HuggingFace and save 500 AI + 500 human samples.
 
 Usage:
     pip install datasets
@@ -26,7 +25,7 @@ HUMAN_OUT = OUTPUT_DIR / "human_samples.jsonl"
 LIMIT = 500
 
 print("Loading HC3 reddit_eli5...")
-ds = load_dataset("Hello-SimpleAI/HC3", "reddit_eli5", trust_remote_code=True)
+ds = load_dataset("json", data_files="hf://datasets/Hello-SimpleAI/HC3/reddit_eli5.jsonl")
 train = ds["train"]
 
 ai_samples = []
@@ -35,20 +34,12 @@ human_samples = []
 for row in train:
     for answer in row.get("chatgpt_answers", []):
         if answer and len(answer.split()) > 20:
-            ai_samples.append({
-                "text": answer,
-                "label": "ai",
-                "source": "hc3_reddit_eli5",
-            })
+            ai_samples.append({"text": answer, "label": "ai", "source": "hc3_reddit_eli5"})
         if len(ai_samples) >= LIMIT:
             break
     for answer in row.get("human_answers", []):
         if answer and len(answer.split()) > 10:
-            human_samples.append({
-                "text": answer,
-                "label": "human",
-                "source": "hc3_reddit_eli5",
-            })
+            human_samples.append({"text": answer, "label": "human", "source": "hc3_reddit_eli5"})
         if len(human_samples) >= LIMIT:
             break
     if len(ai_samples) >= LIMIT and len(human_samples) >= LIMIT:
@@ -62,5 +53,5 @@ with open(HUMAN_OUT, "w") as f:
     for s in human_samples[:LIMIT]:
         f.write(json.dumps(s) + "\n")
 
-print(f"Saved {len(ai_samples)} AI samples to {AI_OUT}")
-print(f"Saved {len(human_samples)} human samples to {HUMAN_OUT}")
+print(f"Saved {min(len(ai_samples), LIMIT)} AI samples to {AI_OUT}")
+print(f"Saved {min(len(human_samples), LIMIT)} human samples to {HUMAN_OUT}")
