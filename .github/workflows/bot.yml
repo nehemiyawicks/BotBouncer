@@ -28,6 +28,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Validate required secrets
+        id: check_secrets
         run: |
           missing=0
           for var in REDDIT_CLIENT_ID REDDIT_CLIENT_SECRET REDDIT_USERNAME REDDIT_PASSWORD MONITOR_SUBS; do
@@ -37,10 +38,11 @@ jobs:
             fi
           done
           if [ "$missing" -eq 1 ]; then
-            echo "See README for setup instructions."
-            exit 1
+            echo "Secrets not configured -- skipping run. See README for setup instructions."
+            echo "secrets_ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "secrets_ok=true" >> "$GITHUB_OUTPUT"
           fi
-          echo "All required secrets present."
         env:
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
@@ -49,17 +51,15 @@ jobs:
           MONITOR_SUBS: ${{ secrets.MONITOR_SUBS }}
 
       - name: Restore seen-comment cache
+        if: steps.check_secrets.outputs.secrets_ok == 'true'
         uses: actions/cache@v4
         with:
           path: seen_comments.txt
-          # Fixed key so the same entry is restored and saved on every run.
-          # actions/cache always saves on cache miss; on hit it skips save.
-          # Use a date-bucketed key so the cache refreshes weekly (avoids
-          # unbounded growth if we ever store more data here).
           key: seen-comments-${{ github.run_number }}
           restore-keys: seen-comments-
 
       - name: Run poll
+        if: steps.check_secrets.outputs.secrets_ok == 'true'
         env:
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
